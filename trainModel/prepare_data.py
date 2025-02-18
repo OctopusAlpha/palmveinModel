@@ -7,16 +7,18 @@ import os
 import random
 import config
 
-# 定义数据转换
+# 定义数据转换（单通道）
 transform = transforms.Compose([
-    transforms.RandomRotation(degrees=30),               # 随机旋转
-    transforms.RandomHorizontalFlip(),                     # 随机水平翻转
-    transforms.RandomVerticalFlip(),                       # 随机垂直翻转
-    transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),# 随机平移
-    transforms.RandomResizedCrop(224),                     # 随机裁剪并缩放到224×224
+    transforms.RandomRotation(degrees=30),
+    transforms.RandomHorizontalFlip(),
+    transforms.RandomVerticalFlip(),
+    transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),
+    transforms.RandomResizedCrop(224),
+    transforms.Grayscale(num_output_channels=1),  # 转换为单通道
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    transforms.Normalize(mean=[0.5], std=[0.5])  # 适应单通道的归一化
 ])
+
 # 自定义三元组数据集类
 class TripletDataset(Dataset):
     def __init__(self, root_dir, transform=None):
@@ -32,19 +34,17 @@ class TripletDataset(Dataset):
         return sum(len(images) for images in self.class_to_images.values())
 
     def __getitem__(self, idx):
-        # 随机选择一个类作为anchor和positive
         anchor_class = random.choice(self.classes)
         anchor_images = self.class_to_images[anchor_class]
         anchor_img_path, positive_img_path = random.sample(anchor_images, 2)
 
-        # 随机选择一个不同的类作为negative
         negative_class = random.choice([cls for cls in self.classes if cls != anchor_class])
         negative_img_path = random.choice(self.class_to_images[negative_class])
 
-        # 加载图像并应用变换
-        anchor_img = Image.open(anchor_img_path).convert('RGB')  # 确保为 RGB 图像
-        positive_img = Image.open(positive_img_path).convert('RGB')
-        negative_img = Image.open(negative_img_path).convert('RGB')
+        # 加载单通道灰度图像
+        anchor_img = Image.open(anchor_img_path).convert('L')
+        positive_img = Image.open(positive_img_path).convert('L')
+        negative_img = Image.open(negative_img_path).convert('L')
 
         if self.transform:
             anchor_img = self.transform(anchor_img)

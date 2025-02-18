@@ -15,6 +15,7 @@ class ResNet18Embedder(nn.Module):
     def __init__(self, embedding_size=128):
         super(ResNet18Embedder, self).__init__()
         base_model = models.resnet18(weights=ResNet18_Weights.DEFAULT)
+        base_model.conv1 =nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
         # 提取除平均池化层和全连接层之外的所有层
         self.features = nn.Sequential(
             base_model.conv1,
@@ -54,7 +55,7 @@ class TripletLoss(nn.Module):
 
 
 criterion = TripletLoss(margin=0.2)
-optimizer = optim.Adam(model.parameters(), lr=0.00005)
+optimizer = optim.Adam(model.parameters(), lr=0.0005)
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3)
 
 
