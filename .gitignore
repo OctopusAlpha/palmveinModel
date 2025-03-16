@@ -1,0 +1,5 @@
+/dataset/*
+/checkpoints
+/caffe_model
+/result
+/test
