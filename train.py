@@ -1,125 +1,205 @@
-import os
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
-from torch.utils.data import DataLoader
-from datetime import datetime
-from model import PalmVeinNet
-from dataset import PalmVeinDataset
+from torchvision import models
+import config
+from prepare_data import get_triplet_datasets
+import time
+from torchvision.models import ResNet18_Weights
 
-def train_model(data_dir, batch_size=64, num_epochs=100, feature_dim=512,
-               learning_rate=0.001, save_dir='checkpoints'):
-    """
-    训练掌静脉识别模型
-    Args:
-        data_dir (str): 数据集根目录
-        batch_size (int): 批次大小
-        num_epochs (int): 训练轮数
-        feature_dim (int): 特征向量维度
-        learning_rate (float): 学习率
-        save_dir (str): 模型保存目录
-    """
-    # 创建保存目录
-    os.makedirs(save_dir, exist_ok=True)
-    
-    # 设置设备
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
-    # 创建数据集和数据加载器
-    train_dataset = PalmVeinDataset(data_dir, is_train=True, apply_preprocess=True)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size,
-                            shuffle=True, num_workers=0, pin_memory=True)
-    
-    # 获取类别数量
-    num_classes = len(train_dataset.classes)
-    
-    # 创建模型，添加分类层
-    model = PalmVeinNet(feature_dim=feature_dim).to(device)
-    classifier = nn.Linear(feature_dim, num_classes).to(device)
-    
-    # 定义损失函数和优化器
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(list(model.parameters()) + list(classifier.parameters()), lr=learning_rate)
-    
-    # 训练循环
-    best_loss = float('inf')
-    for epoch in range(num_epochs):
-        model.train()
-        classifier.train()
-        total_loss = 0
-        correct = 0
-        total = 0
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+
+# 创建改进的特征提取模型
+class ResNet18Embedder(nn.Module):
+    def __init__(self, embedding_size=128, dropout_rate=0.5):
+        super(ResNet18Embedder, self).__init__()
+        self.base_model = models.resnet18(weights=ResNet18_Weights.DEFAULT)
         
-        for batch_idx, (images, labels) in enumerate(train_loader):
-            # 检查数据维度
-            if images.size(0) != labels.size(0):
-                print(f"维度不匹配: images {images.size()}, labels {labels.size()}")
-                continue
-                
-            images, labels = images.to(device), labels.to(device)
-            
+        # 添加Dropout和Batch Normalization
+        self.dropout = nn.Dropout(p=dropout_rate)
+        self.bn = nn.BatchNorm1d(512)
+        
+        # 改进全连接层结构
+        self.base_model.fc = nn.Sequential(
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            self.bn,
+            self.dropout,
+            nn.Linear(512, embedding_size),
+            nn.BatchNorm1d(embedding_size)
+        )
+
+    def forward(self, x):
+        # 提取基础特征
+        x = self.base_model.conv1(x)
+        x = self.base_model.bn1(x)
+        x = self.base_model.relu(x)
+        x = self.base_model.maxpool(x)
+        
+        # 添加缺失的残差块
+        x = self.base_model.layer1(x)
+        x = self.base_model.layer2(x)
+        x = self.base_model.layer3(x)
+        x = self.base_model.layer4(x)
+        
+        x = self.base_model.avgpool(x)
+        x = torch.flatten(x, 1)
+        x = self.base_model.fc(x)
+        
+        # L2归一化
+        x = F.normalize(x, p=2, dim=1)
+        return x
+
+model = ResNet18Embedder(embedding_size=128).to(device)
+
+# 定义改进的Triplet Loss和Center Loss的组合
+class CenterLoss(nn.Module):
+    def __init__(self, num_classes, feat_dim, device):
+        super(CenterLoss, self).__init__()
+        self.centers = nn.Parameter(torch.randn(num_classes, feat_dim).to(device))
+        self.device = device
+        self.feat_dim = feat_dim
+
+    def forward(self, x, labels):
+        batch_size = x.size(0)
+        distmat = torch.pow(x, 2).sum(dim=1, keepdim=True).expand(batch_size, self.centers.size(0)) + \
+                  torch.pow(self.centers, 2).sum(dim=1, keepdim=True).expand(self.centers.size(0), batch_size).t()
+        distmat.addmm_(x, self.centers.t(), beta=1, alpha=-2)
+        
+        classes = torch.arange(self.centers.size(0)).long().to(self.device)
+        labels = labels.unsqueeze(1).expand(batch_size, self.centers.size(0))
+        mask = labels.eq(classes.expand(batch_size, self.centers.size(0)))
+        
+        dist = distmat * mask.float()
+        loss = dist.clamp(min=1e-12, max=1e+12).sum() / batch_size
+        return loss
+
+class TripletLoss(nn.Module):
+    def __init__(self, margin=0.3):
+        super(TripletLoss, self).__init__()
+        self.margin = margin
+
+    def forward(self, anchor, positive, negative):
+        positive_distance = torch.norm(anchor - positive, p=2, dim=1)
+        negative_distance = torch.norm(anchor - negative, p=2, dim=1)
+        loss = torch.clamp(positive_distance - negative_distance + self.margin, min=0.0)
+        return loss.mean()
+
+criterion = TripletLoss(margin=0.2)
+optimizer = optim.Adam(model.parameters(), lr=0.0003)
+scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2)
+
+# 定义Early Stopping类
+class EarlyStopping:
+    def __init__(self, patience=5, min_delta=0):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.best_score = None
+        self.early_stop = False
+
+    def __call__(self, val_loss):
+        if self.best_score is None:
+            self.best_score = val_loss
+        elif val_loss > self.best_score - self.min_delta:
+            self.counter += 1
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_score = val_loss
+            self.counter = 0
+
+early_stopping = EarlyStopping(patience=10, min_delta=0.01)
+if __name__ == '__main__':
+    # 加载三元组数据
+    train_dataloader, valid_dataloader = get_triplet_datasets()
+
+    best_valid_loss = float('inf')
+    learning_rates = []
+
+    for epoch in range(config.EPOCHS):
+        epoch_start_time = time.time()  # 记录当前epoch的开始时间
+        model.train()
+        total_train_loss = 0
+        for data in train_dataloader:
+            anchor, positive, negative = data
+            anchor, positive, negative = anchor.to(device), positive.to(device), negative.to(device)
+
             # 前向传播
-            features = model(images)
-            outputs = classifier(features)
-            
-            # 检查输出维度
-            if outputs.size(1) != num_classes:
-                print(f"输出维度错误: {outputs.size()} vs {num_classes}")
-                continue
-            
+            anchor_out = model(anchor)
+            positive_out = model(positive)
+            negative_out = model(negative)
+
             # 计算损失
-            loss = criterion(outputs, labels)
-            
+            loss = criterion(anchor_out, positive_out, negative_out)
+
             # 反向传播和优化
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            
-            # 统计
-            total_loss += loss.item()
-            _, predicted = outputs.max(1)
-            total += labels.size(0)
-            correct += predicted.eq(labels).sum().item()
-            
-            # 打印训练信息
-            if (batch_idx + 1) % 10 == 0:
-                print(f'Epoch [{epoch+1}/{num_epochs}] '
-                      f'Batch [{batch_idx+1}/{len(train_loader)}] '
-                      f'Loss: {loss.item():.4f} '
-                      f'Acc: {100.*correct/total:.2f}%')
-        
-        # 计算平均损失
-        avg_loss = total_loss / len(train_loader)
-        
-        # 保存最佳模型
-        if avg_loss < best_loss:
-            best_loss = avg_loss
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            save_path = os.path.join(save_dir, f'best_model_{timestamp}.pth')
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'classifier_state_dict': classifier.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'loss': best_loss,
-            }, save_path)
-            print(f'保存最佳模型到 {save_path}')
-        
-        print(f'Epoch [{epoch+1}/{num_epochs}] 平均损失: {avg_loss:.4f}')
 
-def main():
-    # 设置训练参数
-    params = {
-        'data_dir': 'dataset/train',  # 训练数据集目录
-        'batch_size': 32,
-        'num_epochs': 100,
-        'feature_dim': 512,
-        'learning_rate': 0.001,
-        'save_dir': 'checkpoints'
-    }
-    
-    # 开始训练
-    train_model(**params)
+            total_train_loss += loss.item()
 
-if __name__ == '__main__':
-    main()
+        train_loss = total_train_loss / len(train_dataloader)
+
+        # 验证阶段
+        model.eval()
+        total_valid_loss = 0
+        with torch.no_grad():
+            for data in valid_dataloader:
+                anchor, positive, negative = data
+                anchor, positive, negative = anchor.to(device), positive.to(device), negative.to(device)
+
+                anchor_out = model(anchor)
+                positive_out = model(positive)
+                negative_out = model(negative)
+
+                loss = criterion(anchor_out, positive_out, negative_out)
+                total_valid_loss += loss.item()
+
+        valid_loss = total_valid_loss / len(valid_dataloader)
+
+        # 调整学习率
+        scheduler.step(valid_loss)
+
+        # 保存当前学习率
+        current_lr = optimizer.param_groups[0]['lr']
+        learning_rates.append(current_lr)
+
+        # 检查Early Stopping
+        if early_stopping(valid_loss):
+            print("Early stopping triggered")
+            break
+
+        epoch_end_time = time.time()  # 记录当前epoch的结束时间
+        epoch_duration = epoch_end_time - epoch_start_time  # 计算训练时间
+
+        print("Epoch: {}/{}, train loss: {:.5f}, valid loss: {:.5f}, lr: {:.5f}, duration: {:.2f} seconds".format(
+            epoch + 1, config.EPOCHS, train_loss, valid_loss, current_lr, epoch_duration))
+
+        # 保存最低验证损失模型
+        if valid_loss < best_valid_loss:
+            best_valid_loss = valid_loss
+            torch.save(model.state_dict(), f"{config.save_model_dir}/best_model.pth")
+            print(f"最低验证损失模型已保存为 best_model.pth 文件")
+
+    # 最后保存模型
+    torch.save(model.state_dict(), f"{config.save_model_dir}/model_final.pth")
+    print("最终模型已保存为 model_final.pth 文件")
+
+    # 保存学习率到文件
+    with open(f"{config.save_model_dir}/learning_rates.txt", 'w') as f:
+        for lr in learning_rates:
+            f.write(f"{lr}\n")
+    print("学习率已保存为 learning_rates.txt 文件")
+
+    # 测试模型输出特征向量
+    model.eval()
+    dummy_input = torch.ones([1, 3, 224, 224]).to(device)
+    with torch.no_grad():
+        output = model(dummy_input)
+    print("模型输出特征向量大小:", output.shape)
+    print("模型输出特征向量值:", output)

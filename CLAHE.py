@@ -32,7 +32,7 @@ def enhance_image(image):
     
     # 创建CLAHE对象
     # clipLimit控制对比度的限制阈值，tileGridSize定义每个网格的大小
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(5,5))
     
     # 应用CLAHE进行对比度增强
     enhanced = clahe.apply(denoised)
@@ -57,16 +57,16 @@ def test_enhancement(image_path):
         return
     
     # 创建ROI提取器并提取ROI
-    from preprocess import ROIExtractor
+    from roi_extraction import ROIExtractor
     roi_extractor = ROIExtractor()
-    roi = roi_extractor.extract_roi(original)
+    palm_center, roi_resized, rect_coords = roi_extractor.extract_roi(original,visualize=False)
     
-    if roi is None:
+    if roi_resized is None:
         print('ROI提取失败')
         return
     
     # 进行图像增强
-    enhanced_pil = enhance_image(roi)
+    enhanced_pil = enhance_image(roi_resized)
     enhanced = np.array(enhanced_pil)
     
     # 显示原始图像、ROI区域和增强后的图像
@@ -74,17 +74,30 @@ def test_enhancement(image_path):
     plt.rcParams['font.sans-serif'] = ['SimHei']
     plt.figure(figsize=(15, 7))
     
-    plt.subplot(131)
+    # 在原图上绘制掌心中心点和ROI矩形框
+    original_with_roi = original.copy()
+    if rect_coords:
+        x1, y1, x2, y2 = rect_coords
+        cv2.rectangle(original_with_roi, (x1, y1), (x2, y2), (0, 255, 0), 2)
+    if palm_center:
+        cv2.circle(original_with_roi, palm_center, 5, (0, 0, 255), -1)
+    
+    plt.subplot(221)
     plt.imshow(cv2.cvtColor(original, cv2.COLOR_BGR2RGB))
     plt.title('原始图像')
     plt.axis('off')
     
-    plt.subplot(132)
-    plt.imshow(cv2.cvtColor(roi, cv2.COLOR_BGR2RGB))
-    plt.title('ROI区域')
+    plt.subplot(222)
+    plt.imshow(cv2.cvtColor(original_with_roi, cv2.COLOR_BGR2RGB))
+    plt.title('标记ROI区域的原始图像')
     plt.axis('off')
     
-    plt.subplot(133)
+    plt.subplot(223)
+    plt.imshow(cv2.cvtColor(roi_resized, cv2.COLOR_BGR2RGB))
+    plt.title('提取的ROI区域')
+    plt.axis('off')
+    
+    plt.subplot(224)
     plt.imshow(enhanced, cmap='gray')
     plt.title('增强后的ROI')
     plt.axis('off')
@@ -98,6 +111,6 @@ def test_enhancement(image_path):
 
 if __name__ == '__main__':
     # 测试示例
-    image_path = 'dataset/train/001/00001.tiff'  # 替换为实际的图像路径
+    image_path = 'dataset/train/001/00002.tiff'  # 替换为实际的图像路径
     save_dir = 'results/roi_boost'  # 替换为实际的保存目录路径
     test_enhancement(image_path)

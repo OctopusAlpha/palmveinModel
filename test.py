@@ -4,7 +4,6 @@ import torch.nn.functional as F
 from PIL import Image
 from torchvision import transforms
 from model import PalmVeinNet
-from preprocess import preprocess_image as preprocess_palm_image
 
 def load_model(model_path):
     """
@@ -23,12 +22,11 @@ def load_model(model_path):
     model.eval()
     return model
 
-def preprocess_image(image_path, apply_preprocess=True):
+def preprocess_image(image_path):
     """
     预处理图像
     Args:
         image_path (str): 图像文件路径
-        apply_preprocess (bool): 是否应用关键点定位和ROI提取预处理
     Returns:
         torch.Tensor: 预处理后的图像张量
     """
@@ -40,15 +38,10 @@ def preprocess_image(image_path, apply_preprocess=True):
                           std=[0.229, 0.224, 0.225])
     ])
     
-    # 加载并预处理图像
-    if apply_preprocess:
-        # 使用关键点定位和ROI提取预处理
-        image = preprocess_palm_image(image_path)
-    else:
-        # 直接加载图像
-        image = Image.open(image_path)
-        if image.mode != 'RGB':
-            image = image.convert('RGB')
+    # 直接加载图像
+    image = Image.open(image_path)
+    if image.mode != 'RGB':
+        image = image.convert('RGB')
             
     image = transform(image).unsqueeze(0)  # 添加批次维度
     return image
@@ -100,10 +93,9 @@ def main():
     # image_path2 = 'dataset/valid/002/00020.tiff'
     image_path2 = 'dataset/valid/001/00005.tiff'
     
-    # 预处理图像 - 应用关键点定位和ROI提取
-    image1 = preprocess_image(image_path1, apply_preprocess=True)
-    image2 = preprocess_image(image_path2, apply_preprocess=True)
-    
+    # 预处理图像
+    image1 = preprocess_image(image_path1)
+    image2 = preprocess_image(image_path2)
     
     # 提取特征
     features1 = extract_features(model, image1)

@@ -1,5 +1,9 @@
 /dataset/*
 /checkpoints
 /caffe_model
-/result
+/results/*
 /test
+modelTest.zip
+/dataset_roi/*
+/saved_model/*
+/__pycache__

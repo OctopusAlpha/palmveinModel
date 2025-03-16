@@ -1,0 +1,243 @@
+import os
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader
+from datetime import datetime
+import time
+import matplotlib.pyplot as plt
+from model import PalmVeinNet
+from dataset import PalmVeinDataset
+import config
+plt.rcParams['font.sans-serif'] = ['SimHei']
+
+def train_model(batch_size=64, num_epochs=100, feature_dim=512,
+               learning_rate=0.001, save_dir='checkpoints'):
+    """
+    训练掌静脉识别模型
+    Args:
+        batch_size (int): 批次大小
+        num_epochs (int): 训练轮数
+        feature_dim (int): 特征向量维度
+        learning_rate (float): 学习率
+        save_dir (str): 模型保存目录
+    """
+    # 创建保存目录
+    os.makedirs(save_dir, exist_ok=True)
+    
+    # 设置设备
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
+    # 创建数据集和数据加载器
+    train_dataset = PalmVeinDataset(config.train_dir, is_train=True)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size,
+                            shuffle=True, num_workers=0, pin_memory=True)
+    
+    # 创建验证集数据加载器
+    valid_dataset = PalmVeinDataset(config.valid_dir, is_train=False)
+    valid_loader = DataLoader(valid_dataset, batch_size=batch_size,
+                            shuffle=False, num_workers=0, pin_memory=True)
+    
+    # 获取类别数量
+    num_classes = len(train_dataset.classes)
+    
+    # 创建模型，添加分类层
+    model = PalmVeinNet(feature_dim=feature_dim).to(device)
+    classifier = nn.Linear(feature_dim, num_classes).to(device)
+    
+    # 定义损失函数和优化器
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(list(model.parameters()) + list(classifier.parameters()), lr=learning_rate)
+    
+    # 用于记录训练和验证指标的列表
+    train_losses = []
+    train_accs = []
+    valid_losses = []
+    valid_accs = []
+    learning_rates = []
+    
+    # 学习率调整器
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3)
+    
+    # 训练循环
+    best_valid_loss = float('inf')
+    for epoch in range(num_epochs):
+        epoch_start_time = time.time()  # 记录当前epoch的开始时间
+        
+        # 训练阶段
+        model.train()
+        classifier.train()
+        total_train_loss = 0
+        correct_train = 0
+        total_train = 0
+        
+        for batch_idx, (images, labels) in enumerate(train_loader):
+            # 检查数据维度
+            if images.size(0) != labels.size(0):
+                print(f"维度不匹配: images {images.size()}, labels {labels.size()}")
+                continue
+                
+            images, labels = images.to(device), labels.to(device)
+            
+            # 前向传播
+            features = model(images)
+            outputs = classifier(features)
+            
+            # 检查输出维度
+            if outputs.size(1) != num_classes:
+                print(f"输出维度错误: {outputs.size()} vs {num_classes}")
+                continue
+            
+            # 计算损失
+            loss = criterion(outputs, labels)
+            
+            # 反向传播和优化
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            
+            # 统计
+            total_train_loss += loss.item()
+            _, predicted = outputs.max(1)
+            total_train += labels.size(0)
+            correct_train += predicted.eq(labels).sum().item()
+            
+            # 打印训练信息
+            if (batch_idx + 1) % 10 == 0:
+                print(f'Epoch [{epoch+1}/{num_epochs}] '
+                      f'Batch [{batch_idx+1}/{len(train_loader)}] '
+                      f'Loss: {loss.item():.4f} '
+                      f'Acc: {100.*correct_train/total_train:.2f}%')
+        
+        # 计算训练平均损失和准确率
+        train_loss = total_train_loss / len(train_loader)
+        train_acc = 100. * correct_train / total_train
+        train_losses.append(train_loss)
+        train_accs.append(train_acc)
+        
+        # 验证阶段
+        model.eval()
+        classifier.eval()
+        total_valid_loss = 0
+        correct_valid = 0
+        total_valid = 0
+        
+        with torch.no_grad():
+            for batch_idx, (images, labels) in enumerate(valid_loader):
+                images, labels = images.to(device), labels.to(device)
+                
+                # 前向传播
+                features = model(images)
+                outputs = classifier(features)
+                
+                # 计算损失
+                loss = criterion(outputs, labels)
+                
+                # 统计
+                total_valid_loss += loss.item()
+                _, predicted = outputs.max(1)
+                total_valid += labels.size(0)
+                correct_valid += predicted.eq(labels).sum().item()
+        
+        # 计算验证平均损失和准确率
+        valid_loss = total_valid_loss / len(valid_loader)
+        valid_acc = 100. * correct_valid / total_valid
+        valid_losses.append(valid_loss)
+        valid_accs.append(valid_acc)
+        
+        # 调整学习率
+        scheduler.step(valid_loss)
+        
+        # 保存当前学习率
+        current_lr = optimizer.param_groups[0]['lr']
+        learning_rates.append(current_lr)
+        
+        epoch_end_time = time.time()  # 记录当前epoch的结束时间
+        epoch_duration = epoch_end_time - epoch_start_time  # 计算训练时间
+        
+        # 打印训练和验证信息
+        print(f'Epoch [{epoch+1}/{num_epochs}], '
+              f'Train Loss: {train_loss:.4f}, Train Acc: {train_acc:.2f}%, '
+              f'Valid Loss: {valid_loss:.4f}, Valid Acc: {valid_acc:.2f}%, '
+              f'LR: {current_lr:.6f}, Duration: {epoch_duration:.2f}s')
+        
+        # 保存最佳模型
+        if valid_loss < best_valid_loss:
+            best_valid_loss = valid_loss
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            save_path = os.path.join(save_dir, f'best_model_{timestamp}.pth')
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'classifier_state_dict': classifier.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': best_valid_loss,
+            }, save_path)
+            print(f'保存最佳模型到 {save_path}')
+
+    # 可视化训练过程
+    plt.figure(figsize=(12, 10))
+    
+    # 绘制损失曲线
+    plt.subplot(2, 2, 1)
+    plt.plot(train_losses, label='Train Loss')
+    plt.plot(valid_losses, label='Valid Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.title('Loss Curves')
+    
+    # 绘制准确率曲线
+    plt.subplot(2, 2, 2)
+    plt.plot(train_accs, label='Train Accuracy')
+    plt.plot(valid_accs, label='Valid Accuracy')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy (%)')
+    plt.legend()
+    plt.title('Accuracy Curves')
+    
+    # 绘制学习率变化曲线
+    plt.subplot(2, 2, 3)
+    plt.plot(learning_rates)
+    plt.xlabel('Epoch')
+    plt.ylabel('Learning Rate')
+    plt.title('Learning Rate Schedule')
+    
+    # 保存图表
+    os.makedirs('results', exist_ok=True)
+    plt.tight_layout()
+    plt.savefig('results/training_curves.png')
+    plt.close()
+    
+    # 保存训练指标到文件
+    with open('results/training_metrics.txt', 'w') as f:
+        f.write('Epoch,TrainLoss,TrainAcc,ValidLoss,ValidAcc,LR\n')
+        for i in range(len(train_losses)):
+            f.write(f'{i+1},{train_losses[i]:.6f},{train_accs[i]:.2f},{valid_losses[i]:.6f},{valid_accs[i]:.2f},{learning_rates[i]:.6f}\n')
+    
+    print("训练过程可视化已保存到 results/training_curves.png")
+    print("训练指标已保存到 results/training_metrics.txt")
+    
+    # 最后保存模型
+    final_path = os.path.join(save_dir, 'model_final.pth')
+    torch.save({
+        'model_state_dict': model.state_dict(),
+        'classifier_state_dict': classifier.state_dict(),
+    }, final_path)
+    print(f"最终模型已保存到 {final_path}")
+
+def main():
+    # 设置训练参数
+    params = {
+        'batch_size': config.BATCH_SIZE,
+        'num_epochs': config.EPOCHS,
+        'feature_dim': config.feature_dim,
+        'learning_rate': 0.001,
+        'save_dir': config.save_model_dir
+    }
+    
+    # 开始训练
+    train_model(**params)
+
+if __name__ == '__main__':
+    main()

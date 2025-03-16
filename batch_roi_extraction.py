@@ -2,7 +2,7 @@ import os
 import cv2
 import numpy as np
 from tqdm import tqdm
-from preprocess import ROIExtractor
+from roi_extraction import ROIExtractor
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 def process_image(image_path, output_path):
@@ -22,16 +22,16 @@ def process_image(image_path, output_path):
         
         # 创建ROI提取器并提取ROI
         roi_extractor = ROIExtractor()
-        roi = roi_extractor.extract_roi(image)
+        palm_center, roi_resized, rect_coords = roi_extractor.extract_roi(image, visualize=False)
         
-        if roi is None:
+        if roi_resized is None:
             return False, image_path, "ROI提取失败"
         
         # 确保输出目录存在
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         
         # 保存ROI图像
-        cv2.imwrite(output_path, roi)
+        cv2.imwrite(output_path, roi_resized)
         return True, image_path, "成功"
         
     except Exception as e:
