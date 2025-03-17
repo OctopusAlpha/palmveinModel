@@ -12,7 +12,8 @@ from torchvision.models import ResNet18_Weights
 from tqdm import tqdm
 
 # 设置中文字体
-plt.rcParams['font.sans-serif'] = ['SimHei']
+plt.rcParams['font.sans-serif'] = ['Noto Sans CJK SC']
+plt.rcParams['axes.unicode_minus'] = False
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
