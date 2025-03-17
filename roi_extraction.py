@@ -5,8 +5,8 @@ from PIL import Image
 import matplotlib.pyplot as plt
 from torchvision import transforms
 import os
-plt.rcParams['font.sans-serif'] = ['Noto Sans CJK SC']
-plt.rcParams['axes.unicode_minus'] = False
+plt.rcParams['font.sans-serif'] = ['SimHei']
+
 
 class ROIExtractor:
     """
