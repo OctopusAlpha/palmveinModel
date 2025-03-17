@@ -46,7 +46,30 @@ class ROIExtractor:
         
         # 找到掌心中心点（距离最大的点）
         min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(dist_transform)
-        palm_center = max_loc  # 掌心中心点坐标
+        
+        # 定义边缘安全区域（图像边缘的安全距离）
+        edge_margin = max(self.roi_size[0] // 2, self.roi_size[1] // 2)  # 使用ROI尺寸的一半作为安全边距
+        
+        # 检查最大值点是否在安全区域内
+        img_height, img_width = image.shape[:2]
+        is_safe = (max_loc[0] >= edge_margin and 
+                  max_loc[0] < img_width - edge_margin and 
+                  max_loc[1] >= edge_margin and 
+                  max_loc[1] < img_height - edge_margin)
+        
+        if is_safe:
+            palm_center = max_loc  # 如果在安全区域内，使用最大值点作为掌心中心点
+        else:
+            # 如果最大值点在边缘区域，寻找安全区域内的最大值点
+            # 创建安全区域掩码
+            safe_mask = np.zeros_like(dist_transform)
+            safe_mask[edge_margin:img_height-edge_margin, edge_margin:img_width-edge_margin] = 1
+            
+            # 在安全区域内寻找最大值点
+            masked_dist = dist_transform * safe_mask
+            _, _, _, safe_max_loc = cv2.minMaxLoc(masked_dist)
+            palm_center = safe_max_loc
+            print(f"原始掌心中心点{max_loc}位于边缘区域，已调整为安全区域内的点{palm_center}")
         
         # 4. 找到掌心区域的轮廓
         contours, _ = cv2.findContours(palm_center_region, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -193,7 +216,7 @@ def test_roi_extraction():
     os.makedirs("./results", exist_ok=True)
     # 测试图片路径
     test_images = [
-        "dataset/train/001/00008.tiff",
+        "dataset/train/199/07988.tiff",
         "dataset/train/001/06001.tiff"
     ]
     

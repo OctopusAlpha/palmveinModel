@@ -7,4 +7,3 @@ modelTest.zip
 /dataset_roi/*
 /saved_model/*
 /__pycache__
-deviceTest.py
