@@ -87,7 +87,7 @@ class SplitDataset():
 
 
 if __name__ == '__main__':
-    os.mkdir("dataset", exist_ok=True)
+    os.makedirs("dataset", exist_ok=True)
     split_dataset = SplitDataset(dataset_dir="original_dataset",
                                  saved_dataset_dir="dataset",
                                  show_progress=False)
