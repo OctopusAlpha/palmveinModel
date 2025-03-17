@@ -6,6 +6,7 @@ Pillow>=8.0.0
 matplotlib>=3.3.0
 opencv-python>=4.4.0
 scipy>=1.5.0
+tqdm>=4.50.0
 # 如果需要使用pytorch2caffe转换工具，还需要安装以下依赖
 # caffe
 pytorch2caffe

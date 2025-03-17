@@ -6,7 +6,13 @@ from torchvision import models
 import config
 from prepare_data import get_triplet_datasets
 import time
+import os
+import matplotlib.pyplot as plt
 from torchvision.models import ResNet18_Weights
+from tqdm import tqdm
+
+# 设置中文字体
+plt.rcParams['font.sans-serif'] = ['SimHei']
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -114,17 +120,28 @@ class EarlyStopping:
 
 early_stopping = EarlyStopping(patience=10, min_delta=0.01)
 if __name__ == '__main__':
+    os.makedirs(config.save_model_dir, exist_ok=True)
     # 加载三元组数据
     train_dataloader, valid_dataloader = get_triplet_datasets()
 
     best_valid_loss = float('inf')
     learning_rates = []
+    
+    # 用于可视化的列表
+    train_losses = []
+    valid_losses = []
+    train_accuracies = []
+    valid_accuracies = []
 
     for epoch in range(config.EPOCHS):
         epoch_start_time = time.time()  # 记录当前epoch的开始时间
         model.train()
         total_train_loss = 0
-        for data in train_dataloader:
+        correct_train = 0
+        total_train = 0
+        # 使用tqdm包装训练数据加载器，显示进度条
+        train_loop = tqdm(train_dataloader, desc=f'Epoch {epoch+1}/{config.EPOCHS} [Train]', leave=True)
+        for data in train_loop:
             anchor, positive, negative = data
             anchor, positive, negative = anchor.to(device), positive.to(device), negative.to(device)
 
@@ -136,20 +153,37 @@ if __name__ == '__main__':
             # 计算损失
             loss = criterion(anchor_out, positive_out, negative_out)
 
+            # 计算准确率（正样本距离小于负样本距离的比例）
+            positive_distance = torch.norm(anchor_out - positive_out, p=2, dim=1)
+            negative_distance = torch.norm(anchor_out - negative_out, p=2, dim=1)
+            correct_train += torch.sum(positive_distance < negative_distance).item()
+            total_train += anchor_out.size(0)
+
             # 反向传播和优化
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
             total_train_loss += loss.item()
+            
+            # 计算当前批次的准确率
+            batch_accuracy = torch.sum(positive_distance < negative_distance).item() / anchor_out.size(0)
+            
+            # 更新进度条显示当前批次的损失值和准确率
+            train_loop.set_postfix(loss=f'{loss.item():.4f}', acc=f'{batch_accuracy:.4f}', lr=f'{optimizer.param_groups[0]["lr"]:.6f}')
 
         train_loss = total_train_loss / len(train_dataloader)
+        train_accuracy = correct_train / total_train
 
         # 验证阶段
         model.eval()
         total_valid_loss = 0
+        correct_valid = 0
+        total_valid = 0
         with torch.no_grad():
-            for data in valid_dataloader:
+            # 使用tqdm包装验证数据加载器，显示进度条
+            valid_loop = tqdm(valid_dataloader, desc=f'Epoch {epoch+1}/{config.EPOCHS} [Valid]', leave=True)
+            for data in valid_loop:
                 anchor, positive, negative = data
                 anchor, positive, negative = anchor.to(device), positive.to(device), negative.to(device)
 
@@ -159,15 +193,32 @@ if __name__ == '__main__':
 
                 loss = criterion(anchor_out, positive_out, negative_out)
                 total_valid_loss += loss.item()
+                
+                # 计算准确率（正样本距离小于负样本距离的比例）
+                positive_distance = torch.norm(anchor_out - positive_out, p=2, dim=1)
+                negative_distance = torch.norm(anchor_out - negative_out, p=2, dim=1)
+                correct_valid += torch.sum(positive_distance < negative_distance).item()
+                total_valid += anchor_out.size(0)
+                
+                # 计算当前批次的准确率
+                batch_accuracy = torch.sum(positive_distance < negative_distance).item() / anchor_out.size(0)
+                
+                # 更新进度条显示当前批次的损失值和准确率
+                valid_loop.set_postfix(loss=f'{loss.item():.4f}', acc=f'{batch_accuracy:.4f}')
 
         valid_loss = total_valid_loss / len(valid_dataloader)
+        valid_accuracy = correct_valid / total_valid
 
         # 调整学习率
         scheduler.step(valid_loss)
 
-        # 保存当前学习率
+        # 保存当前学习率、损失值和准确率用于可视化
         current_lr = optimizer.param_groups[0]['lr']
         learning_rates.append(current_lr)
+        train_losses.append(train_loss)
+        valid_losses.append(valid_loss)
+        train_accuracies.append(train_accuracy)
+        valid_accuracies.append(valid_accuracy)
 
         # 检查Early Stopping
         if early_stopping(valid_loss):
@@ -177,19 +228,98 @@ if __name__ == '__main__':
         epoch_end_time = time.time()  # 记录当前epoch的结束时间
         epoch_duration = epoch_end_time - epoch_start_time  # 计算训练时间
 
-        print("Epoch: {}/{}, train loss: {:.5f}, valid loss: {:.5f}, lr: {:.5f}, duration: {:.2f} seconds".format(
-            epoch + 1, config.EPOCHS, train_loss, valid_loss, current_lr, epoch_duration))
+        print("Epoch: {}/{}, train loss: {:.5f}, valid loss: {:.5f}, train acc: {:.5f}, valid acc: {:.5f}, lr: {:.5f}, duration: {:.2f} seconds".format(
+            epoch + 1, config.EPOCHS, train_loss, valid_loss, train_accuracy, valid_accuracy, current_lr, epoch_duration))
 
         # 保存最低验证损失模型
         if valid_loss < best_valid_loss:
             best_valid_loss = valid_loss
             torch.save(model.state_dict(), f"{config.save_model_dir}/best_model.pth")
             print(f"最低验证损失模型已保存为 best_model.pth 文件")
+        
+        # 实时可视化训练过程
+        if (epoch + 1) % 5 == 0 or epoch == 0:  # 每5个epoch更新一次图表，或第一个epoch后
+            os.makedirs('results', exist_ok=True)
+            plt.figure(figsize=(12, 12))
+            
+            # 绘制损失曲线
+            plt.subplot(3, 1, 1)
+            plt.plot(train_losses, label='训练损失')
+            plt.plot(valid_losses, label='验证损失')
+            plt.xlabel('Epoch')
+            plt.ylabel('Loss')
+            plt.legend()
+            plt.title('损失曲线')
+            
+            # 绘制准确率曲线
+            plt.subplot(3, 1, 2)
+            plt.plot(train_accuracies, label='训练准确率')
+            plt.plot(valid_accuracies, label='验证准确率')
+            plt.xlabel('Epoch')
+            plt.ylabel('Accuracy')
+            plt.legend()
+            plt.title('准确率曲线')
+            
+            # 绘制学习率变化曲线
+            plt.subplot(3, 1, 3)
+            plt.plot(learning_rates)
+            plt.xlabel('Epoch')
+            plt.ylabel('Learning Rate')
+            plt.title('学习率变化')
+            
+            plt.tight_layout()
+            plt.savefig('results/training_curves_current.png')
+            plt.close()
+            
+            print(f"Epoch {epoch+1}: 当前训练过程可视化已保存到 results/training_curves_current.png")
 
     # 最后保存模型
     torch.save(model.state_dict(), f"{config.save_model_dir}/model_final.pth")
     print("最终模型已保存为 model_final.pth 文件")
 
+    # 可视化训练过程
+    plt.figure(figsize=(12, 12))
+    
+    # 绘制损失曲线
+    plt.subplot(3, 1, 1)
+    plt.plot(train_losses, label='训练损失')
+    plt.plot(valid_losses, label='验证损失')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.title('损失曲线')
+    
+    # 绘制准确率曲线
+    plt.subplot(3, 1, 2)
+    plt.plot(train_accuracies, label='训练准确率')
+    plt.plot(valid_accuracies, label='验证准确率')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.legend()
+    plt.title('准确率曲线')
+    
+    # 绘制学习率变化曲线
+    plt.subplot(3, 1, 3)
+    plt.plot(learning_rates)
+    plt.xlabel('Epoch')
+    plt.ylabel('Learning Rate')
+    plt.title('学习率变化')
+    
+    # 保存图表
+    os.makedirs('results', exist_ok=True)
+    plt.tight_layout()
+    plt.savefig('results/training_curves.png')
+    plt.close()
+    
+    # 保存训练指标到文件
+    with open('results/training_metrics.txt', 'w') as f:
+        f.write('Epoch,TrainLoss,ValidLoss,TrainAcc,ValidAcc,LR\n')
+        for i in range(len(train_losses)):
+            f.write(f'{i+1},{train_losses[i]:.6f},{valid_losses[i]:.6f},{train_accuracies[i]:.6f},{valid_accuracies[i]:.6f},{learning_rates[i]:.6f}\n')
+    
+    print("训练过程可视化已保存到 results/training_curves.png")
+    print("训练指标已保存到 results/training_metrics.txt")
+    
     # 保存学习率到文件
     with open(f"{config.save_model_dir}/learning_rates.txt", 'w') as f:
         for lr in learning_rates:
