@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from model import PalmVeinNet
 from dataset import PalmVeinDataset
 import config
-plt.rcParams['font.sans-serif'] = ['SimHei']
+plt.rcParams['font.sans-serif'] = ['Microsoft YaHei']
 
 
 def train_model(batch_size=64, num_epochs=100, feature_dim=512,

@@ -1,7 +1,7 @@
 # some training parameters
 #7200
 EPOCHS = 10
-BATCH_SIZE = 128
+BATCH_SIZE = 16
 feature_dim = 512
 image_height = 224
 image_width = 224

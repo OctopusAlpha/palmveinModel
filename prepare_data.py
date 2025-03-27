@@ -12,8 +12,6 @@ from CLAHE import enhance_image
 # 定义数据转换（单通道）
 transform = transforms.Compose([
     transforms.RandomRotation(degrees=30),
-    transforms.RandomHorizontalFlip(),
-    transforms.RandomVerticalFlip(),
     transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),
     transforms.RandomResizedCrop(224),
     transforms.ToTensor(),

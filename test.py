@@ -329,7 +329,7 @@ if __name__ == '__main__':
     # SingleCompare()
     # 设置参数
     num_pairs = 500  # 要比较的图像对数量
-    threshold = 0.8  # 相似度阈值
+    threshold = 0.75  # 相似度阈值
     visualize = False  # 是否可视化ROI提取过程
     
     # 运行批量比较
