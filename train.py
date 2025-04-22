@@ -19,12 +19,11 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # 创建改进的特征提取模型
 class ResNet18Embedder(nn.Module):
-    def __init__(self, embedding_size=128, dropout_rate=0.5):
+    def __init__(self, embedding_size=128):
         super(ResNet18Embedder, self).__init__()
         self.base_model = models.resnet18(weights=ResNet18_Weights.DEFAULT)
         
-        # 添加Dropout和Batch Normalization
-        self.dropout = nn.Dropout(p=dropout_rate)
+        # 添加Batch Normalization
         self.bn = nn.BatchNorm1d(512)
         
         # 改进全连接层结构
@@ -32,7 +31,6 @@ class ResNet18Embedder(nn.Module):
             nn.Linear(512, 512),
             nn.ReLU(),
             self.bn,
-            self.dropout,
             nn.Linear(512, embedding_size),
             nn.BatchNorm1d(embedding_size)
         )

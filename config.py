@@ -10,6 +10,9 @@ save_model_dir = "saved_model"
 dataset_dir = "dataset_roi/"
 train_dir = dataset_dir + "train"
 valid_dir = dataset_dir + "valid"
+preprocessed_dataset_dir = "dataset_preprocessed/"
+preprocessed_train_dir = preprocessed_dataset_dir + "train"
+preprocessed_valid_dir = preprocessed_dataset_dir + "valid"
 
 # choose a network
 model = "resnet18"

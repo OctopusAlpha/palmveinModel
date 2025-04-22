@@ -8,4 +8,4 @@ modelTest.zip
 /saved_model/*
 /__pycache__
 saved_image.pgm
-/data/*
+/dataset_preprocessed/*

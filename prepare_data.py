@@ -1,73 +1,71 @@
 import torch
 from torchvision import transforms
 from torch.utils.data import DataLoader, Dataset
-from PIL import Image
+import torch
+from torch.utils.data import DataLoader, Dataset
 import os
 import random
 import config
-import cv2
-import numpy as np
-from CLAHE import enhance_image
 
-# 定义数据转换（单通道）
-transform = transforms.Compose([
-    transforms.RandomRotation(degrees=30),
-    transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),
-    transforms.RandomResizedCrop(224),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406],  # ImageNet统计值
-                         std=[0.229, 0.224, 0.225])
-])
-
-# 自定义三元组数据集类
+# 自定义三元组数据集类 - 加载预处理的张量
 class TripletDataset(Dataset):
-    def __init__(self, root_dir, transform=None):
+    def __init__(self, root_dir):
         self.root_dir = root_dir
-        self.transform = transform
-        self.classes = os.listdir(root_dir)
-        self.class_to_images = {
-            cls: [os.path.join(root_dir, cls, img) for img in os.listdir(os.path.join(root_dir, cls))]
+        self.classes = [d for d in os.listdir(root_dir) if os.path.isdir(os.path.join(root_dir, d))]
+        self.class_to_tensors = {
+            cls: [os.path.join(root_dir, cls, tensor_file) 
+                  for tensor_file in os.listdir(os.path.join(root_dir, cls)) 
+                  if tensor_file.endswith('.pt')] # 加载 .pt 文件
             for cls in self.classes
-            
         }
+        # 过滤掉少于2个张量的类别
+        self.class_to_tensors = {cls: paths for cls, paths in self.class_to_tensors.items() if len(paths) >= 2}
+        self.classes = list(self.class_to_tensors.keys())
+        if not self.classes:
+            raise RuntimeError(f"在 {root_dir} 中没有找到至少包含2个 '.pt' 文件的类别。请确保已运行 preprocess_data.py。")
+        print(f"在 {root_dir} 中找到 {len(self.classes)} 个有效类别。")
 
     def __len__(self):
-        return sum(len(images) for images in self.class_to_images.values())
+        # 计算总张量数
+        return sum(len(tensors) for tensors in self.class_to_tensors.values())
 
     def __getitem__(self, idx):
+        # 随机选择一个类别作为锚点
         anchor_class = random.choice(self.classes)
-        anchor_images = self.class_to_images[anchor_class]
-        anchor_img_path, positive_img_path = random.sample(anchor_images, 2)
+        anchor_tensors = self.class_to_tensors[anchor_class]
+        
+        # 从锚点类别中随机选择两个不同的张量路径作为锚点和正样本
+        anchor_tensor_path, positive_tensor_path = random.sample(anchor_tensors, 2)
 
+        # 随机选择一个不同的类别作为负样本类别
         negative_class = random.choice([cls for cls in self.classes if cls != anchor_class])
-        negative_img_path = random.choice(self.class_to_images[negative_class])
+        negative_tensors = self.class_to_tensors[negative_class]
+        # 从负样本类别中随机选择一个张量路径
+        negative_tensor_path = random.choice(negative_tensors)
 
-        # 加载灰度图像
-        anchor_img = Image.open(anchor_img_path).convert('L')
-        positive_img = Image.open(positive_img_path).convert('L')
-        negative_img = Image.open(negative_img_path).convert('L')
-        
-        # 应用CLAHE增强
-        anchor_img = enhance_image(anchor_img)
-        positive_img = enhance_image(positive_img)
-        negative_img = enhance_image(negative_img)
-        
-        # 将灰度图像转换为三通道
-        anchor_img = Image.merge('RGB', (anchor_img, anchor_img, anchor_img))
-        positive_img = Image.merge('RGB', (positive_img, positive_img, positive_img))
-        negative_img = Image.merge('RGB', (negative_img, negative_img, negative_img))
+        # 加载张量
+        anchor_tensor = torch.load(anchor_tensor_path)
+        positive_tensor = torch.load(positive_tensor_path)
+        negative_tensor = torch.load(negative_tensor_path)
 
-        if self.transform:
-            anchor_img = self.transform(anchor_img)
-            positive_img = self.transform(positive_img)
-            negative_img = self.transform(negative_img)
+        return anchor_tensor, positive_tensor, negative_tensor
 
-        return anchor_img, positive_img, negative_img
-
-# 获取三元组数据集
+# 获取三元组数据集 - 使用预处理后的数据
 def get_triplet_datasets():
-    train_dataset = TripletDataset(root_dir=config.train_dir, transform=transform)
-    valid_dataset = TripletDataset(root_dir=config.valid_dir, transform=transform)
+    # 确保预处理目录存在
+    if not os.path.exists(config.preprocessed_train_dir) or not os.path.exists(config.preprocessed_valid_dir):
+        raise FileNotFoundError("预处理数据目录不存在。请先运行 preprocess_data.py 脚本。")
+        
+    print(f"从 {config.preprocessed_train_dir} 加载训练数据...")
+    train_dataset = TripletDataset(root_dir=config.preprocessed_train_dir)
+    print(f"从 {config.preprocessed_valid_dir} 加载验证数据...")
+    valid_dataset = TripletDataset(root_dir=config.preprocessed_valid_dir)
+
+    # 检查数据集是否为空
+    if len(train_dataset) == 0:
+        print(f"警告: 训练数据集为空 ({config.preprocessed_train_dir})。")
+    if len(valid_dataset) == 0:
+        print(f"警告: 验证数据集为空 ({config.preprocessed_valid_dir})。")
 
     train_dataloader = DataLoader(train_dataset, batch_size=config.BATCH_SIZE, shuffle=True, num_workers=4, pin_memory=True)
     valid_dataloader = DataLoader(valid_dataset, batch_size=config.BATCH_SIZE, shuffle=False, num_workers=4, pin_memory=True)
