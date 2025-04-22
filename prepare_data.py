@@ -28,6 +28,7 @@ class TripletDataset(Dataset):
         self.class_to_images = {
             cls: [os.path.join(root_dir, cls, img) for img in os.listdir(os.path.join(root_dir, cls))]
             for cls in self.classes
+            
         }
 
     def __len__(self):
