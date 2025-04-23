@@ -326,7 +326,7 @@ def BatchCompare(num_pairs=100, threshold=0.8, visualize=False):
 
 
 if __name__ == '__main__':
-    # SingleCompare()
+    SingleCompare()
     # 设置参数
     num_pairs = 500  # 要比较的图像对数量
     threshold = 0.75  # 相似度阈值

@@ -44,9 +44,9 @@ class TripletDataset(Dataset):
         negative_tensor_path = random.choice(negative_tensors)
 
         # 加载张量
-        anchor_tensor = torch.load(anchor_tensor_path)
-        positive_tensor = torch.load(positive_tensor_path)
-        negative_tensor = torch.load(negative_tensor_path)
+        anchor_tensor = torch.load(anchor_tensor_path,weights_only=True)
+        positive_tensor = torch.load(positive_tensor_path,weights_only=True)
+        negative_tensor = torch.load(negative_tensor_path,weights_only=True)
 
         return anchor_tensor, positive_tensor, negative_tensor
 

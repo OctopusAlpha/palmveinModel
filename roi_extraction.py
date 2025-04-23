@@ -20,7 +20,7 @@ class ROIExtractor:
         """
         self.roi_size = roi_size
     
-    def repair_binary_image(self, binary_image, original_gray=None, mode="morphology+contour", kernel_size=5, min_area=100, visualize=True):
+    def repair_binary_image(self, binary_image, original_gray=None, mode="morphology+contour", kernel_size=5, min_area=100, visualize=False):
         """
         对二值化后的图像进行修复
         Args:
@@ -97,7 +97,7 @@ class ROIExtractor:
         
         return binary_image
     
-    def extract_roi(self, image, visualize=True):
+    def extract_roi(self, image, visualize=False):
         # 1. 图像预处理：中值滤波去噪
         median_filtered = cv2.medianBlur(image, 5)
         
