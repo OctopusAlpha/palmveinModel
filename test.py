@@ -110,7 +110,7 @@ def cosine_similarity(features1, features2):
     """
     return F.cosine_similarity(features1, features2).item()
 
-def SigleCompare():
+def SingleCompare():
     # 设置模型路径
     best_model = f"{config.save_model_dir}/best_model.pth"
     print(f'使用模型: {best_model}')
