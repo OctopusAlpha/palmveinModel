@@ -231,8 +231,24 @@ if __name__ == '__main__':
         # 保存最低验证损失模型
         if valid_loss < best_valid_loss:
             best_valid_loss = valid_loss
-            torch.save(model.state_dict(), f"{config.save_model_dir}/best_model.pth")
-            print(f"最低验证损失模型已保存为 best_model.pth 文件")
+            best_model_path = os.path.join(config.save_model_dir, 'best_model.pth')
+            print(f'Epoch {epoch+1}: 验证损失降低 ({best_valid_loss:.4f})，保存最佳模型到 {best_model_path}')
+            # 保存包含模型、优化器状态和epoch的最佳checkpoint
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'best_valid_loss': best_valid_loss,
+            }, best_model_path)
+
+            # 保存最新的checkpoint，用于续训
+            latest_checkpoint_path = os.path.join(config.save_model_dir, 'latest_checkpoint.pth')
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'best_valid_loss': best_valid_loss,
+            }, latest_checkpoint_path)
         
         # 实时可视化训练过程
         if (epoch + 1) % 5 == 0 or epoch == 0:  # 每5个epoch更新一次图表，或第一个epoch后
