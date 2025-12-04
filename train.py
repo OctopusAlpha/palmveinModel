@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 from src import config
 from src.model.network import PalmVeinNet
-from src.model.loss import TripletLoss, CenterLoss
+from src.model.loss import TripletLoss, CenterLoss, OnlineTripletLoss
 from src.data.dataset import get_dataloaders
 
 # Setup device
@@ -59,7 +59,9 @@ def train():
     model = PalmVeinNet(embedding_size=config.feature_dim).to(device)
     
     # Losses
-    triplet_loss_fn = TripletLoss(margin=config.triplet_margin).to(device)
+    # Use OnlineTripletLoss (Batch Hard)
+    triplet_loss_fn = OnlineTripletLoss(margin=config.triplet_margin).to(device)
+    
     # Center Loss needs to know number of classes
     # We can get it from the dataset
     num_classes = len(train_loader.dataset.classes)
@@ -91,25 +93,19 @@ def train():
         
         loop = tqdm(train_loader, desc=f'Epoch {epoch+1}/{config.EPOCHS} [Train]', leave=True)
         
-        for anchor, positive, negative, labels in loop:
-            anchor, positive, negative = anchor.to(device), positive.to(device), negative.to(device)
+        # Updated loop for standard dataset (images, labels)
+        for images, labels in loop:
+            images = images.to(device)
             labels = labels.to(device)
             
             # Forward
-            # We need features for CenterLoss, and embeddings for Triplet
-            # But PalmVeinNet returns embeddings (L2 normalized).
-            # CenterLoss usually works on features before normalization or after.
-            # Let's use the output of model (embeddings).
+            embeddings = model(images)
             
-            anchor_out = model(anchor)
-            positive_out = model(positive)
-            negative_out = model(negative)
+            # Online Triplet Loss (Batch Hard)
+            t_loss = triplet_loss_fn(embeddings, labels)
             
-            # Triplet Loss
-            t_loss = triplet_loss_fn(anchor_out, positive_out, negative_out)
-            
-            # Center Loss (We use anchor's embedding and label)
-            c_loss = center_loss_fn(anchor_out, labels)
+            # Center Loss
+            c_loss = center_loss_fn(embeddings, labels)
             
             # Combined Loss
             loss = t_loss + config.center_loss_weight * c_loss
@@ -121,11 +117,30 @@ def train():
             
             total_train_loss += loss.item()
             
-            # Accuracy Metric (Triplet correctness)
-            pos_dist = torch.norm(anchor_out - positive_out, p=2, dim=1)
-            neg_dist = torch.norm(anchor_out - negative_out, p=2, dim=1)
-            correct_pairs += (pos_dist < neg_dist).sum().item()
-            total_pairs += anchor.size(0)
+            # Accuracy Metric (Hard Triplet correctness)
+            # Re-calculate distances for metric (could be optimized but fine for now)
+            with torch.no_grad():
+                dot_product = torch.matmul(embeddings, embeddings.t())
+                square_norm = torch.diag(dot_product)
+                distances = square_norm.unsqueeze(1) - 2 * dot_product + square_norm.unsqueeze(0)
+                distances = torch.clamp(distances, min=0.0)
+                distances = torch.sqrt(distances + 1e-12)
+
+                mask_pos = triplet_loss_fn._get_anchor_positive_triplet_mask(labels).float()
+                mask_neg = triplet_loss_fn._get_anchor_negative_triplet_mask(labels).float()
+
+                # Max Pos Dist
+                pos_dists = distances * mask_pos
+                hard_pos_dist = pos_dists.max(1)[0]
+                
+                # Min Neg Dist
+                max_d = distances.max()
+                neg_dists = distances + max_d * (1.0 - mask_neg)
+                hard_neg_dist = neg_dists.min(1)[0]
+                
+                # Correct if hard_pos < hard_neg
+                correct_pairs += (hard_pos_dist < hard_neg_dist).sum().item()
+                total_pairs += images.size(0)
             
             loop.set_postfix(loss=loss.item(), acc=correct_pairs/total_pairs)
             
@@ -140,31 +155,63 @@ def train():
         
         with torch.no_grad():
             loop_val = tqdm(valid_loader, desc=f'Epoch {epoch+1}/{config.EPOCHS} [Valid]', leave=True)
-            for anchor, positive, negative, labels in loop_val:
-                anchor, positive, negative = anchor.to(device), positive.to(device), negative.to(device)
+            for images, labels in loop_val:
+                images = images.to(device)
                 labels = labels.to(device)
                 
-                anchor_out = model(anchor)
-                positive_out = model(positive)
-                negative_out = model(negative)
+                embeddings = model(images)
                 
-                t_loss = triplet_loss_fn(anchor_out, positive_out, negative_out)
-                c_loss = center_loss_fn(anchor_out, labels)
+                t_loss = triplet_loss_fn(embeddings, labels)
+                c_loss = center_loss_fn(embeddings, labels)
                 loss = t_loss + config.center_loss_weight * c_loss
                 
                 total_valid_loss += loss.item()
                 
-                pos_dist = torch.norm(anchor_out - positive_out, p=2, dim=1)
-                neg_dist = torch.norm(anchor_out - negative_out, p=2, dim=1)
-                correct_valid += (pos_dist < neg_dist).sum().item()
-                total_valid += anchor.size(0)
+                # Metric
+                dot_product = torch.matmul(embeddings, embeddings.t())
+                square_norm = torch.diag(dot_product)
+                distances = square_norm.unsqueeze(1) - 2 * dot_product + square_norm.unsqueeze(0)
+                distances = torch.clamp(distances, min=0.0)
+                distances = torch.sqrt(distances + 1e-12)
+
+                mask_pos = triplet_loss_fn._get_anchor_positive_triplet_mask(labels).float()
+                mask_neg = triplet_loss_fn._get_anchor_negative_triplet_mask(labels).float()
+
+                pos_dists = distances * mask_pos
+                # Handle case where validation batch might not have positives for some samples (if batch size is small and random)
+                # But validation loader is not balanced sampler, it's standard sequential.
+                # If a batch has only 1 sample of a class, max(pos_dists) will be 0 (masked).
+                # This is a limitation of batch-based metric on validation if not carefully batched.
+                # However, for validation loss, it handles it gracefully (loss=0 if no pos/neg).
+                # For metric, let's just compute it where possible.
                 
-                loop_val.set_postfix(loss=loss.item(), acc=correct_valid/total_valid)
+                # Actually, for validation, we might want standard pair accuracy or just loss.
+                # But let's stick to the same metric for consistency, acknowledging it might be noisy if batch size is small.
+                # Config BATCH_SIZE is 16, which is small. Validation might have single samples.
+                
+                hard_pos_dist = pos_dists.max(1)[0]
+                
+                max_d = distances.max()
+                neg_dists = distances + max_d * (1.0 - mask_neg)
+                hard_neg_dist = neg_dists.min(1)[0]
+                
+                # Only count valid triplets (where we have at least one positive and one negative)
+                has_pos = mask_pos.sum(1) > 0
+                has_neg = mask_neg.sum(1) > 0
+                valid_mask = has_pos & has_neg
+                
+                if valid_mask.sum() > 0:
+                    correct = (hard_pos_dist < hard_neg_dist)[valid_mask].sum().item()
+                    correct_valid += correct
+                    total_valid += valid_mask.sum().item()
+                
+                loop_val.set_postfix(loss=loss.item(), acc=correct_valid/total_valid if total_valid > 0 else 0)
         
         avg_valid_loss = total_valid_loss / len(valid_loader)
         valid_losses.append(avg_valid_loss)
         
-        print(f"Epoch {epoch+1}: Train Loss={avg_train_loss:.4f}, Valid Loss={avg_valid_loss:.4f}, Valid Acc={correct_valid/total_valid:.4f}")
+        valid_acc = correct_valid/total_valid if total_valid > 0 else 0
+        print(f"Epoch {epoch+1}: Train Loss={avg_train_loss:.4f}, Valid Loss={avg_valid_loss:.4f}, Valid Acc={valid_acc:.4f}")
         
         # Scheduler step
         scheduler.step(avg_valid_loss)
