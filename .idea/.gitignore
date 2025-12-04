@@ -1,7 +1,0 @@
-# 默认忽略的文件
-/shelf/
-/workspace.xml
-/dataset/*
-/__pycachae__
-/.idea
-/results

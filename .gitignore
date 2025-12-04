@@ -10,3 +10,6 @@ modelTest.zip
 saved_image.pgm
 /dataset_preprocessed/*
 dataset_preprocessed.zip
+raw_dataset/
+**/__pycache__
+/.idea
