@@ -9,7 +9,6 @@ A robust palm vein recognition system based on ResNet18, utilizing a combination
 *   **Dynamic Data Pipeline**:
     *   **On-the-fly Augmentation**: Real-time random rotation, cropping, flipping, and color jittering during training.
     *   **Integrated Enhancement**: Automatic CLAHE (Contrast Limited Adaptive Histogram Equalization) preprocessing.
-    *   **Efficient Loading**: No need for offline preprocessing or intermediate `.pt` files.
 *   **Modular Design**: Clean separation of core logic, data handling, and model definitions following standard engineering practices.
 *   **Training Utilities**: Early stopping, learning rate scheduling, and comprehensive logging.
 
@@ -59,14 +58,25 @@ palmveinResnet/
         dataset_roi/
         ├── train/
         │   ├── person_001/
-        │   │   ├── 01.bmp
+        │   │   ├── 01.tiff
         │   │   └── ...
         │   └── ...
         └── valid/
             ├── person_001/
             └── ...
         ```
-    *   If you have raw images, use `src/data/split.py` or `src/core/roi.py` (via tools) to prepare them.
+    *   If you have raw images, use `src/data/split.py` to prepare them.`src/data/split.py` automatically categorize images into train and valid directories and extract ROI.The raw_dataset directory should be structured as follows:
+        ```
+        raw_dataset/
+        ├── session1/
+        │   ├── 00001.tiff
+        │   ├── 00002.tiff
+        │   └── ...
+        └── session2/
+            ├── 00001.tiff
+            ├── 00002.tiff
+            └── ...
+        ```
 
 ## Usage
 

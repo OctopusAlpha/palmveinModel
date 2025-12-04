@@ -59,7 +59,7 @@ def train():
     model = PalmVeinNet(embedding_size=config.feature_dim).to(device)
     
     # Losses
-    triplet_loss_fn = TripletLoss(margin=0.3).to(device)
+    triplet_loss_fn = TripletLoss(margin=config.triplet_margin).to(device)
     # Center Loss needs to know number of classes
     # We can get it from the dataset
     num_classes = len(train_loader.dataset.classes)
@@ -69,14 +69,14 @@ def train():
     # CenterLoss parameters need to be optimized too
     optimizer = optim.Adam([
         {'params': model.parameters()},
-        {'params': center_loss_fn.parameters(), 'lr': 0.008}
-    ], lr=0.0048)
+        {'params': center_loss_fn.parameters(), 'lr': config.lr_center}
+    ], lr=config.lr)
     
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=config.scheduler_factor, patience=config.scheduler_patience)
     
     # Early Stopping
     save_path = os.path.join(config.save_model_dir, 'best_palm_vein_model.pth')
-    early_stopping = EarlyStopping(patience=10, save_path=save_path)
+    early_stopping = EarlyStopping(patience=config.early_stopping_patience, save_path=save_path)
     
     # Training Loop
     print("Start Training...")
@@ -112,7 +112,7 @@ def train():
             c_loss = center_loss_fn(anchor_out, labels)
             
             # Combined Loss
-            loss = t_loss + 0.01 * c_loss
+            loss = t_loss + config.center_loss_weight * c_loss
             
             # Backward
             optimizer.zero_grad()
@@ -150,7 +150,7 @@ def train():
                 
                 t_loss = triplet_loss_fn(anchor_out, positive_out, negative_out)
                 c_loss = center_loss_fn(anchor_out, labels)
-                loss = t_loss + 0.01 * c_loss
+                loss = t_loss + config.center_loss_weight * c_loss
                 
                 total_valid_loss += loss.item()
                 
