@@ -1,5 +1,26 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+
+class LabelSmoothingCrossEntropy(nn.Module):
+    """
+    Cross Entropy Loss with Label Smoothing.
+    """
+    def __init__(self, smoothing=0.1):
+        super(LabelSmoothingCrossEntropy, self).__init__()
+        self.smoothing = smoothing
+
+    def forward(self, pred, target):
+        """
+        Args:
+            pred: Prediction logits (batch_size, num_classes)
+            target: True labels (batch_size)
+        """
+        log_prob = F.log_softmax(pred, dim=-1)
+        weight = pred.new_ones(pred.size()) * self.smoothing / (pred.size(-1) - 1.)
+        weight.scatter_(-1, target.unsqueeze(-1), (1. - self.smoothing))
+        loss = (-weight * log_prob).sum(dim=-1).mean()
+        return loss
 
 class TripletLoss(nn.Module):
     def __init__(self, margin=0.3):
@@ -105,3 +126,16 @@ class CenterLoss(nn.Module):
         dist = distmat * mask.float()
         loss = dist.clamp(min=1e-12, max=1e+12).sum() / batch_size
         return loss
+
+class FocalLoss(nn.Module):
+    def __init__(self, gamma=0, eps=1e-7):
+        super(FocalLoss, self).__init__()
+        self.gamma = gamma
+        self.eps = eps
+        self.ce = torch.nn.CrossEntropyLoss()
+
+    def forward(self, input, target):
+        logp = self.ce(input, target)
+        p = torch.exp(-logp)
+        loss = (1 - p) ** self.gamma * logp
+        return loss.mean()

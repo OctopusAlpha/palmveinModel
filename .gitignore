@@ -14,3 +14,4 @@ raw_dataset/
 **/__pycache__
 /.idea
 /__pycache__
+/dataset_raw_split

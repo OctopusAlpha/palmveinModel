@@ -183,12 +183,12 @@ if __name__ == "__main__":
         os.path.join("raw_dataset", "session1"),
         os.path.join("raw_dataset", "session2")
     ]
-    TARGET_DIR = "dataset_roi"
+    TARGET_DIR = "dataset_raw_split"
     
     processor = DataProcessor(
         source_dirs=SOURCE_DIRS,
         target_dir=TARGET_DIR,
         train_ratio=0.8,
-        roi_extract=True  # Set to True to extract ROI, False to just copy
+        roi_extract=False  # Set to True to extract ROI, False to just copy
     )
     processor.run()

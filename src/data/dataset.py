@@ -37,9 +37,8 @@ class PalmVeinDataset(Dataset):
         # Load image
         img = Image.open(path).convert('L')
         # Apply CLAHE (Enhancement)
-        img = enhance_image(img)
-        # Convert to RGB (3 channels) as ResNet expects 3 channels
-        img = Image.merge('RGB', (img, img, img))
+        # img = enhance_image(img)
+        # Keep as grayscale (1 channel)
         return img
 
     def __getitem__(self, idx):
@@ -96,20 +95,23 @@ def get_transforms(is_train=True):
             # Removed RandomHorizontalFlip as palm veins are chiral/directional
             transforms.RandomRotation(degrees=15),
             transforms.RandomResizedCrop(224, scale=(0.85, 1.0)),
+            # ColorJitter works on PIL images, but for grayscale it adjusts brightness/contrast/saturation/hue.
+            # For 1-channel L-mode image, ColorJitter only supports brightness and contrast.
             transforms.ColorJitter(brightness=0.1, contrast=0.1),
             # Add RandomAffine for more robust geometric invariance
             transforms.RandomAffine(degrees=0, translate=(0.05, 0.05)),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], 
-                                 std=[0.229, 0.224, 0.225])
+            # Normalize for 1 channel (mean and std for ImageNet are for RGB, here we use 0.5 or compute dataset statistics)
+            # Assuming images are roughly [0, 1] after ToTensor, and we want [-1, 1] or similar centered.
+            # 0.5, 0.5 is a safe default for grayscale if no specific stats.
+            transforms.Normalize(mean=[0.5], std=[0.5])
         ])
     else:
         return transforms.Compose([
             transforms.Resize((256, 256)),
             transforms.CenterCrop(224),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], 
-                                 std=[0.229, 0.224, 0.225])
+            transforms.Normalize(mean=[0.5], std=[0.5])
         ])
 
 def get_dataloaders():
@@ -130,9 +132,12 @@ def get_dataloaders():
     
     train_sampler = BalancedBatchSampler(train_dataset, n_classes=n_classes, n_samples=n_samples)
     
-    train_loader = DataLoader(train_dataset, batch_sampler=train_sampler, num_workers=0, pin_memory=True)
+    # Increase num_workers for faster data loading
+    num_workers = min(4, os.cpu_count() if os.cpu_count() else 0)
+    
+    train_loader = DataLoader(train_dataset, batch_sampler=train_sampler, num_workers=num_workers, pin_memory=True)
     
     # Validation loader doesn't need balanced sampler, just standard shuffle=False
-    valid_loader = DataLoader(valid_dataset, batch_size=config.BATCH_SIZE, shuffle=False, num_workers=0, pin_memory=True)
+    valid_loader = DataLoader(valid_dataset, batch_size=config.BATCH_SIZE, shuffle=False, num_workers=num_workers, pin_memory=True)
     
     return train_loader, valid_loader
